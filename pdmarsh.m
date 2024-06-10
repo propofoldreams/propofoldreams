@@ -141,15 +141,15 @@ disp (' ')
 
 disp ('Starting optimisation algo ...')
 tic
-minEbolus = round(PDABolguess * 0.9);
-maxEbolus = round(PDABolguess * 1.1);
+minEbolus = round(PDABolguess * 0.8);
+maxEbolus = round(PDABolguess * 1.2);
 
 %calc size of guess matrix
 gsize = floor((maxEbolus - minEbolus)/2)*9;
 disp (['Guessing ' num2str(gsize) ' combinations ...'])
 GuessMatrix = zeros(gsize,6);
 guessindex = 0;
-for WGuess = PDABWguess-4:1:PDABWguess+4
+for WGuess = PDABWguess-10:1:PDABWguess+10
     %marsh parameters
     V1m = 0.228 * WGuess;
     V2m = 0.463 * WGuess;

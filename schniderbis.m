@@ -1,89 +1,29 @@
-function V = eleveldconc(infndata,ptdata,peeg)
-% calculates the Eleveld Ce profile based on cumulative propofol
-% volume-time profile
-maxinfnrate = 12000;
+function V = schniderbis(infndata,ptdata,peeg,infn)
 
-
-%extract pt data
+%% Extract pt data
 age = ptdata(1);
 weight = ptdata(2);
 height = ptdata(3);
 sex = ptdata(4);
 bmi = weight/(height/100)^2;
+lbm = (1.07*weight-148*(weight/height)^2)*(1-sex)+sex*(1.1*weight-128*(weight/height)^2); % James Equation for LBM
 
-if nargin == 2
-    peeg = 0;
-end
-
-%infndata matrix cleaning
-if max(infndata(:,2)) < 15 %2nd column is Cp and 3rd column is cumvol, so let's swap 2nd and 3rd columns around
-    infndata(:,4) = infndata(:,2);
-    infndata(:,2) = [];
-end
-
-%eleveld parameters
-V1 = 6.28*(weight/(weight + 33.6))/(0.675675675676);
-V2 = 25.5 * (weight/70)*exp(-0.0156*(age-35));
-V3 = 273*exp(-0.0138*age)*(sex*((0.88+(0.12)/(1+(age/13.4)^(-12.7)))*(9270*weight/(6680+216*weight/(height/100)^2)))+(1-sex)*((1.11+(-0.11)/(1+(age/7.1)^(-1.1)))*(9270*weight/(8780+244*weight/(height/100)^2))))/54.4752059601377;
-Cl1 = ((sex*1.79+(1-sex)*2.1)*((weight/70)^0.75)*((age*52.143+40)^9.06)/((age*52.143+40)^9.06+42.3^9.06))*exp(-0.00286*age);
-Cl2 = 1.75*(((25.5*(weight/70)*exp(-0.0156*(age-35)))/25.5)^0.75)*(1+1.3*(1-(age*52.143+40)/((age*52.143+40)+68.3)));
-Cl3 = 1.11*(((sex*((0.88+(0.12)/(1+(age/13.4)^(-12.7)))*(9270*weight/(6680+216*weight/(height/100)^2)))+(1-sex)*((1.11+(-0.11)/(1+(age/7.1)^(-1.1)))*(9270*weight/(8780+244*weight/(height/100)^2))))*exp(-0.0138*age)/54.4752059601377)^0.75)*((age*52.143+40)/((age*52.143+40)+68.3)/0.964695544);
-k10 = Cl1 / V1;
-k12 = Cl2/V1;
-k21 = Cl2/V2;
-k13 = Cl3/V1;
-k31 = Cl3/V3;
-ke0 = 0.146*(weight/70)^(-0.25);
-
+%% Schnider parameters
+V1 = 4.27;
+V2 = 18.9-0.391*(age-53);
+V3 = 238;
+k10 = (0.443+0.0107*(weight-77)-0.0159*(lbm-59)+0.0062*(height-177));
+k12 = 0.0035;
+k21 = (1.29-0.024*(age-53))/(18.9-0.391*(age-53));
+k13 = 0.196;
+k31 = 0.0035;
+ke0 = 0.456;
 %store the V and k's into a vector
 Vmat = [V1 ; V2 ; V3];
-kmat = [k10 ; k12 ; k21 ; k13 ; k31 ; ke0];
+kmat = [k10 ; k12 ; k21; k13; k31; ke0];
 
-%set up time matrix
-tmax = max(infndata(:,1));
-tsteps = size(infndata,1);
-Tmat = (1:1:tmax)';
-V = zeros(tmax,7);
-V(:,1) = Tmat(:,1);
-infn = zeros(tmax,1);
-
-%calc infn regime
-for i = 1:1:tsteps
-    if i == 1 %first time step
-        % we need to first work out the bolus and infusion regime for
-        % induction here! first build the gold standard
-        cumvol = infndata(1,2); %how much total propofol infused?
-        t = infndata(1,1); %how much time elapsed?
-        [peakconc, ttpe] = peaking(Vmat,kmat);
-        bolus = 3/peakconc*10;
-        [~, Infngold] = tci(3,bolus,(1:1:t)',Vmat,kmat,maxinfnrate,ttpe); %calculate stereotypical infn regime with CeT = 3 corresponding to first time step
-        infn(1:1:t) = Infngold/sum(Infngold/3600)*(cumvol); %scale the stereotypical infn regime to match that the cumvol of first timestep
-    else
-        cumvol = infndata(i,2) - infndata(i-1,2);
-        t = infndata(i,1) - infndata(i-1,1) - 1;
-        infn((infndata(i-1,1)+1):1:(infndata(i,1))) = cumvol/t*3600;
-    end
-end
-
-for t = 2:1:tmax
-    dV1 = (k21*V(t-1,3)+k31*V(t-1,4)-V(t-1,2)*(k10+k12+k13))/60; %delta V1 compartment from redistribution
-    V(t,2) = V(t-1,2) + dV1 + infn(t)/3600; %iterative calc V1 drug
-    V(t,3) = V(t-1,3) + (k12*V(t-1,2)-k21*V(t-1,3))/60; %iterative V2
-    V(t,4) = V(t-1,4) + (k13*V(t-1,2)-k31*V(t-1,4))/60; %iterative V3
-    V(t,5) = V(t,2)/V1;
-    V(t,6) = V(t-1,6) + (V(t-1,5)-V(t-1,6))*ke0/60;
-end
-
-%% do some eBIS calculations
-basebis = 93;
-ce50 = 3.08*exp(-0.00635*(age-35));
-for t = 2:1:tmax
-    if V(t,6) > ce50
-        V(t,7) = basebis*((ce50^1.47))/(ce50^1.47+V(t,6)^1.47);
-    else
-        V(t,7) = basebis*((ce50^1.89))/(ce50^1.89+V(t,6)^1.89);
-    end
-end
+%% Do Schnider TCI calculations
+V = pkmodel(infn(:,2), infn(:,1),Vmat, kmat);
 
 %% eBIS adjustment algorithm
 % basic concept: user inputs BIS-Ce pairs for fitting
@@ -119,24 +59,19 @@ totweight = sum(bisread(:,1)); % this is for time-based scaling - i.e. give more
 % how many readings are there left in the bisread matrix?
 k = size(bisread, 1);
 
-% if there are no readings left after data cleaning, then just should use the ce50
-% prediction from Eleveld
-if k == 0
-    ce50fit = ce50;
-    ce50shiftfit = ce50*0.3;
-else
+basebis = 95;
+tmax = max(infndata(:,1));
 
     %% Bayesian BIS fitting search algorithm
     % aim is to find the best Ce50 and horizontal shift (Ce50shift) that match the dataset
-
-    cemat = round((ce50*0.5)*100,0)/100:0.05:round((ce50*2)*100,0)/100;
+    cemat = 1:0.05:6;
     %ceshift = round((ce50*0.1)*100,0)/100:0.05:round((ce50)*100,0)/100;
     %cesqrdiff = zeros(length(cemat)*length(ceshift),3);
     p = 0;
 
     for n = 1:1:length(cemat)
         ce50test = cemat(n);
-        ceshift = round((ce50test*0.3)*100,0)/100:0.05:round((ce50test)*100,0)/100; % shift by at least 30% of ce50
+        ceshift = round((ce50test*0.1)*100,0)/100:0.05:round((ce50test)*100,0)/100; % shift by at least 10% of ce50
         for m = 1:1:length(ceshift)
             p = p + 1;
             ce50shift = ceshift(m);
@@ -160,19 +95,8 @@ else
     %find the ce50 with the smallest sqr difference
     minloc = cesqrdiff(:,3)==min(cesqrdiff(:,3));
     ce50fit = cesqrdiff(minloc,1);
-    if length(ce50fit) > 1
-        ce50fit = mean(ce50fit);
-    end
     ce50shiftfit = cesqrdiff(minloc,2);
-    if length(ce50shiftfit) > 1
-        ce50shiftfit = mean(ce50shiftfit);
-    end
-end
 
-%% debugging purposes
-%  here I specify a MANUAL ce50fit and shift
-%ce50fit = 2;
-%ce50shiftfit = 0.6;
 
 %% Generate the fitted predicted BIS curve for plotting
 %eegfit is a vector containing the predicted BIS at each given time step
@@ -260,10 +184,8 @@ V(:,2:1:4) = [];
 
 %% Display results
 clc
-disp ('Propofol Dreams - BAYESIAN Calculator')
+disp ('Propofol Dreams - Schnider BAYESIAN Calculator')
 disp ('-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=')
-disp (' ')
-disp (['Eleveld Baseline Ce50 = ' num2str(ce50)])
 disp (' ')
 if k > 1
     disp (['Best Ce50 fit = ' num2str(ce50fit)])
@@ -273,7 +195,7 @@ if k > 1
     disp (' ')
     disp (['eBIS = 60   @   Ce = ' num2str((93/60-1)^(1/1.47)*ce50fit+ce50shiftfit) '   in ' num2str(floor(wakeuptime60/60)) ' min ' num2str(mod(wakeuptime60,60)) ' sec @ Time = ' num2str(bisread(k,1)+wakeuptime60)])
     disp (['eBIS = 80   @   Ce = ' num2str((93/80-1)^(1/1.47)*ce50fit+ce50shiftfit) '   in ' num2str(floor(wakeuptime80/60)) ' min ' num2str(mod(wakeuptime80,60)) ' sec @ Time = ' num2str(bisread(k,1)+wakeuptime80)])
-    disp (['Predicted wake up in ' num2str(floor(floor((wakeuptime60*4+wakeuptime80)/5)/60)) ' min ' num2str(mod(floor((wakeuptime60*4+wakeuptime80)/5),60)) ' sec @ time = ' num2str(bisread(k,1)+floor((wakeuptime60*4+wakeuptime80)/5))]) %% note: bisread(k ,1) should be the time that PUMP STOPPED - otherwise wake up time not accurate
+    disp (['Predicted wake up in ' num2str(floor(floor((wakeuptime60+wakeuptime80)/2)/60)) ' min ' num2str(mod(floor((wakeuptime60+wakeuptime80)/2),60)) ' sec @ time = ' num2str(bisread(k,1)+floor((wakeuptime60+wakeuptime80)/2))]) %% note: bisread(k ,1) should be the time that PUMP STOPPED - otherwise wake up time not accurate
     if peeg(end) > 90
         disp (' ')
         disp (['Clinical wake up   @   Ce = ' num2str(V(end,3))])
@@ -284,28 +206,20 @@ disp (' ')
 
 %% Plotting
 figure
-%subplot (2,1,1); % this plot is for debug purposes only
-%plot (doseresp(:,1), doseresp(:,2))
-%subplot (2,1,2);
+subplot (2,1,1); % this plot is for debug purposes only
+plot (doseresp(:,1), doseresp(:,2))
+subplot (2,1,2);
 
 yyaxis left
-plot (V(:,1)/60, V(:,3))
+plot (V(:,1), V(:,3))
 ylabel ('Ce')
-xlabel ('Time (min)')
 
 if k > 1
     yyaxis right
     %plot (V(:,1), V(:,4), 'r-', V(:,1), eegfit, 'g--', infndata(:,1), peeg, 'ko')
-    plot (V(:,1)/60, eegfit, 'r--', infndata(:,1)/60, peeg, 'ko')
+    plot (V(:,1), eegfit, 'g--', infndata(:,1), peeg, 'ko')
 else
     yyaxis right
-    plot (V(:,1)/60, V(:,4), 'r-', infndata(:,1)/60, peeg, 'ko')
+    plot (V(:,1), V(:,4), 'r-', infndata(:,1), peeg, 'ko')
 end
 ylabel ('Predicted BIS')
-xline ((floor((wakeuptime60*4+wakeuptime80)/5)+bisread(k,1))/60, 'r.', {'wake up'})
-
-%test case (pt 22)
-% actcp = [526	5.6
-% 833	4.3
-% 1160	3.9
-% 2270	3.4
